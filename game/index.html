@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Card Logic: Hell Edition</title>
+    <style>
+        :root { --primary: #2c3e50; --accent: #e74c3c; --hell: #660000; --bg: #ecf0f1; }
+        body { font-family: sans-serif; background: var(--bg); text-align: center; padding: 10px; margin: 0; }
+        .container { max-width: 900px; margin: auto; background: white; padding: 20px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
+        
+        /* カード表示エリア */
+        .card-grid { display: grid; grid-template-columns: repeat(13, 1fr); gap: 4px; margin: 15px 0; padding: 10px; background: #1a1a1a; border-radius: 10px; }
+        .card-ui { aspect-ratio: 2/3; background: white; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; transition: 0.2s; color: #333; }
+        .card-ui.eliminated { opacity: 0.15; filter: grayscale(1); }
+        .red { color: #e74c3c; }
+
+        /* 操作エリア */
+        .controls { background: #f8f9fa; padding: 15px; border-radius: 10px; margin-top: 15px; border: 1px solid #ddd; }
+        button { padding: 8px 15px; cursor: pointer; border-radius: 5px; border: none; background: var(--primary); color: white; margin: 3px; font-weight: bold; }
+        .hell-btn { background: var(--hell); }
+        .status { font-size: 1.2rem; margin-bottom: 10px; font-weight: bold; }
+        .log { text-align: left; background: #333; color: #00ff00; padding: 10px; height: 150px; overflow-y: auto; font-family: monospace; font-size: 0.9rem; margin-top: 10px; border-radius: 5px; }
+        
+        input[type="number"] { width: 50px; padding: 5px; border-radius: 4px; border: 1px solid #ccc; }
+        select { padding: 5px; border-radius: 4px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Card Logic Master</h1>
+    
+    <div id="setup">
+        <p>難易度を選択してください</p>
+        <div class="btn-group">
+            <button onclick="initGame('normal')">ノーマル (1枚/4回)</button>
+            <button onclick="initGame('hard')">ハード (1枚/5回)</button>
+            <button class="hell-btn" onclick="initGame('hell')">ヘル (2枚/10回/手動)</button>
+        </div>
+    </div>
+
+    <div id="game-screen" style="display:none;">
+        <div class="status">MODE: <span id="mode-text"></span> | TURNS: <span id="turns">0</span></div>
+        
+        <div class="card-grid" id="card-display"></div>
+
+        <div class="controls" id="question-ui">
+            <div>
+                数字が <input type="number" id="num-input" min="1" max="13" value="7"> より
+                <button onclick="askNumber()">下ですか？</button>
+            </div>
+            <div id="suit-btns" style="display:none; margin-top: 10px;">
+                <button onclick="askSuit('color', 'red')">赤マーク？</button>
+                <button onclick="askSuit('specific', 'ハート')">♥？</button>
+                <button onclick="askSuit('specific', 'ダイヤ')">♦？</button>
+                <button onclick="askSuit('specific', 'スペード')">♠？</button>
+                <button onclick="askSuit('specific', 'クローバー')">♣？</button>
+            </div>
+            <button class="hell-btn" style="margin-top:15px; width: 100%;" onclick="showFinalInput()">最終回答を提出する</button>
+        </div>
+
+        <div id="final-answer-ui" style="display:none;" class="controls">
+            <h3>【最終回答】</h3>
+            <div id="inputs-container"></div>
+            <button class="hell-btn" style="margin-top:15px;" onclick="checkFinalAnswer()">運命の判定</button>
+        </div>
+
+        <div class="log" id="log">ログ: ゲーム開始を待機中...</div>
+    </div>
+</div>
+
+<script>
+    const SUITS = [
+        { name: 'ハート', symbol: '♥', color: 'red' },
+        { name: 'ダイヤ', symbol: '♦', color: 'red' },
+        { name: 'クローバー', symbol: '♣', color: 'black' },
+        { name: 'スペード', symbol: '♠', color: 'black' }
+    ];
+    
+    let targetCards = [];
+    let gameMode = '';
+    let turnsRemaining = 0;
+
+    function initGame(m) {
+        gameMode = m;
+        turnsRemaining = m === 'normal' ? 4 : (m === 'hard' ? 5 : 10);
+        targetCards = [];
+        
+        // 全カードリスト作成
+        const deck = [];
+        SUITS.forEach(s => { for(let i=1; i<=13; i++) deck.push({suit:s, num:i}); });
+        
+        // ターゲットをランダム抽出
+        const count = gameMode === 'hell' ? 2 : 1;
+        for(let i=0; i < count; i++) {
+            const idx = Math.floor(Math.random() * deck.length);
+            targetCards.push(deck.splice(idx, 1)[0]);
+        }
+
+        document.getElementById('setup').style.display = 'none';
+        document.getElementById('game-screen').style.display = 'block';
+        document.getElementById('mode-text').innerText = gameMode.toUpperCase();
+        document.getElementById('mode-text').style.color = gameMode === 'hell' ? 'var(--hell)' : 'var(--primary)';
+        
+        if(gameMode !== 'normal') document.getElementById('suit-btns').style.display = 'block';
+        
+        renderCards();
+        updateUI();
+        document.getElementById('log').innerHTML = "<div>ログ: ゲーム開始。カードが選ばれました。</div>";
+    }
+
+    function renderCards() {
+        const grid = document.getElementById('card-display');
+        grid.innerHTML = '';
+        SUITS.forEach(suit => {
+            for (let i = 1; i <= 13; i++) {
+                const div = document.createElement('div');
+                div.className = `card-ui ${suit.color}`;
+                div.id = `card-${suit.name}-${i}`;
+                div.innerHTML = `${suit.symbol}<br>${i}`;
+                grid.appendChild(div);
+            }
+        });
+    }
+
+    function askNumber() {
+        const val = parseInt(document.getElementById('num-input').value);
+        let results = targetCards.map(c => c.num < val ? "YES" : "NO");
+        addLog(`Q: 数字が ${val} より下？ → A: [${results.join(' / ')}]`);
+        
+        // ヘルモード以外なら自動消去
+        if (gameMode !== 'hell') {
+            const isTrue = targetCards[0].num < val;
+            eliminateCards(card => isTrue ? card.num >= val : card.num < val);
+        }
+        nextTurn();
+    }
+
+    function askSuit(type, param) {
+        let results = targetCards.map(c => {
+            if(type === 'color') return c.suit.color === param ? "YES" : "NO";
+            return c.suit.name === param ? "YES" : "NO";
+        });
+        
+        const label = type === 'color' ? '赤マーク？' : `${param}？`;
+        addLog(`Q: ${label} → A: [${results.join(' / ')}]`);
+        
+        // ヘルモード以外なら自動消去
+        if (gameMode !== 'hell') {
+            const isTrue = results[0] === "YES";
+            if (type === 'color') {
+                eliminateCards(card => isTrue ? card.suit.color !== 'red' : card.suit.color === 'red');
+            } else {
+                eliminateCards(card => isTrue ? card.suit.name !== param : card.suit.name === param);
+            }
+        }
+        nextTurn();
+    }
+
+    function eliminateCards(conditionFunc) {
+        SUITS.forEach(suit => {
+            for(let i=1; i<=13; i++) {
+                if(conditionFunc({suit: suit, num: i})) {
+                    const el = document.getElementById(`card-${suit.name}-${i}`);
+                    if(el) el.classList.add('eliminated');
+                }
+            }
+        });
+    }
+
+    function nextTurn() {
+        turnsRemaining--;
+        updateUI();
+        if(turnsRemaining <= 0) {
+            addLog("!! ターン終了。最終回答を行ってください !!");
+            showFinalInput();
+        }
+    }
+
+    function updateUI() {
+        document.getElementById('turns').innerText = turnsRemaining;
+    }
+
+    function addLog(msg) {
+        const log = document.getElementById('log');
+        log.innerHTML = `<div>> ${msg}</div>` + log.innerHTML;
+    }
+
+    function showFinalInput() {
+        document.getElementById('question-ui').style.display = 'none';
+        const container = document.getElementById('inputs-container');
+        container.innerHTML = '';
+        
+        targetCards.forEach((_, i) => {
+            let html = `<div style="margin: 10px 0; padding: 10px; border-bottom: 1px dashed #ccc;">カード ${i+1}: `;
+            if(gameMode !== 'normal') {
+                html += `<select id="final-suit-${i}">`;
+                SUITS.forEach(s => html += `<option value="${s.name}">${s.symbol} ${s.name}</option>`);
+                html += `</select> `;
+            }
+            html += `<input type="number" id="final-num-${i}" min="1" max="13" placeholder="数"></div>`;
+            container.innerHTML += html;
+        });
+        document.getElementById('final-answer-ui').style.display = 'block';
+    }
+
+    function checkFinalAnswer() {
+        let correctCount = 0;
+        targetCards.forEach((target, i) => {
+            const uNum = parseInt(document.getElementById(`final-num-${i}`).value);
+            const uSuit = gameMode === 'normal' ? target.suit.name : document.getElementById(`final-suit-${i}`).value;
+            if(uNum === target.num && uSuit === target.suit.name) correctCount++;
+        });
+
+        const ansStr = targetCards.map(c => `${c.suit.symbol}${c.num}`).join(' と ');
+        if(correctCount === targetCards.length) {
+            alert("🔥 MISSION COMPLETE!\n地獄の推論を乗り越えました！\n正解: " + ansStr);
+        } else {
+            alert(`MISS...\n${correctCount}枚的中しました。\n正解は [${ansStr}] でした。`);
+        }
+        location.reload();
+    }
+</script>
+
+</body>
+</html>
